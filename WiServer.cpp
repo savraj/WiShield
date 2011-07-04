@@ -81,43 +81,48 @@ char rxPin = -1;
 /* Enables basic log messages via Serial */
 boolean verbose = false;
 
+/* Timestamp when last connection attempt was started */
+unsigned long connectTime = 0;
+
+
+#define DISCONNECTED 0
+#define CONNECTING 1
+#define CONNECTED 2
+
+#define CONNECTION_TIMEOUT (unsigned long)59000
+
+
+// Current connection state
+char state = DISCONNECTED;
+
+
+/* Checks if the WiShield is currently connected */
+boolean isConnected() {
+	return (zg_get_conn_state() == 1);	
+}
 
 void Server::init(pageServingFunction function) {
-
-	// WiShield init
-	zg_init();
-
-#ifdef USE_DIG0_INTR
-	attachInterrupt(0, zg_isr, LOW);
-#endif
-
-#ifdef USE_DIG8_INTR
-	// set digital pin 8 on Arduino
-	// as ZG interrupt pin
-	PCICR |= (1<<PCIE0);
-	PCMSK0 |= (1<<PCINT0);
-#endif
-
-	while(zg_get_conn_state() != 1) {
-		zg_drv_process();
-	}
-
-	// Start the stack
-	stack_init();
 
 	// Store the callback function for serving pages
 	// and start listening for connections on port 80 if
 	// the function is non-null
 	callbackFunc = function;
-	if (callbackFunc) {
-		// Listen for server requests on port 80
-		uip_listen(HTONS(80));
-	}
+	state = DISCONNECTED;
 
 #ifdef DEBUG
 	verbose = true;
-	Serial.println("WiServer init called");
+	Serial.println("WiSInt");
 #endif // DEBUG
+}
+
+void Server::getMACAddr(unsigned char *mac) {
+   unsigned char *read;
+   
+   read = zg_get_mac();
+   
+   for(byte i = 0; i < 6; i++) {
+      mac[i] = read[i];   
+   }
 }
 
 #ifdef USE_DIG8_INTR
@@ -237,16 +242,16 @@ void send() {
 	len = len > (int)uip_conn->mss ? (int)uip_conn->mss : len;
 
 	if (verbose) {
-		Serial.print("TX ");
+		Serial.print("T");
 		Serial.print(len);
-		Serial.println(" bytes");
+		Serial.println("b");
 	}
 
 #ifdef DEBUG
 	Serial.print(app->ackedCount);
-	Serial.print(" - ");
+	Serial.print("-");
 	Serial.print(app->ackedCount + len - 1);
-	Serial.print(" of ");
+	Serial.print("of");
 	Serial.println((int)app->cursor);
 #endif // DEBUG
 
@@ -353,7 +358,7 @@ void sendPage() {
 		WiServer.println_P(httpNotFound);
 		WiServer.println();
 #ifdef DEBUG
- 		Serial.println("URL Not Found");
+ 		Serial.println("URLNtFnd");
 #endif // DEBUG
 	}
 	// Send the 'real' bytes in the buffer
@@ -392,7 +397,7 @@ void server_task_impl() {
 	if (uip_connected()) {
 
 		if (verbose) {
-			Serial.println("Server connected");
+			Serial.println("SvrCon");
 		}
 
 		// Initialize the server request data
@@ -405,7 +410,7 @@ void server_task_impl() {
 		// Process the received packet and check if a valid GET request had been received
 		if (processPacket((char*)uip_appdata, uip_datalen()) && app->request) {
 			if (verbose) {
-				Serial.print("Processing request for ");
+				Serial.print("ProcReqF");
 				Serial.println((char*)app->request);
 			}
 			sendPage();
@@ -441,7 +446,7 @@ void server_task_impl() {
 		// Check if a URL was stored for this connection
 		if (app->request != NULL) {
 			if (verbose) {
-				Serial.println("Server connection closed");
+				Serial.println("SvrConClsd");
 			}
 
 			// Free RAM and clear the pointer
@@ -572,7 +577,7 @@ void client_task_impl() {
 	if (uip_connected()) {
 
 		if (verbose) {
-			Serial.print("Connected to ");
+			Serial.print("ConTo");
 			Serial.println(req->hostName);
 		}
 		app->ackedCount = 0;
@@ -601,9 +606,9 @@ void client_task_impl() {
  		setRXPin(HIGH);
 
 		if (verbose) {
-			Serial.print("RX ");
+			Serial.print("R");
 			Serial.print(uip_datalen());
-			Serial.print(" bytes from ");
+			Serial.print("b");
 			Serial.println(req->hostName);
 		}
 
@@ -614,10 +619,10 @@ void client_task_impl() {
 	 	}
  	}
 
-	if (uip_aborted() || uip_timedout() || uip_closed()) {
+	if (uip_closed() || uip_aborted() || uip_timedout()) {
 		if (req != NULL) {
 			if (verbose) {
-				Serial.print("Ended connection with ");
+				Serial.print("EndConW");
 				Serial.println(req->hostName);
 			}
 
@@ -697,38 +702,109 @@ void server_app_task() {
 }
 
 
+boolean Server::checkConnection(int seconds) {
+	
+	long endTime = millis() + (seconds * 1000);
+	
+	while (!this->server_task() & ((seconds == -1) || (millis() < endTime)));
+	
+	return state == CONNECTED;
+	
+}
+
+
 /*
  * Called by the sketch's main loop
  */
-void Server::server_task() {
-
-	// Run the stack state machine
-	stack_process();
-
+boolean Server::server_task() {
+		
 	// Run the driver
 	zg_drv_process();
+	
+	if (state == CONNECTED) {
+		
+		if (isConnected()) {
+			// Run the stack state machine
+			stack_process();
+			
+	#ifdef ENABLE_CLIENT_MODE
+			// Check if there is a pending client request
+			if (queue) {
+				// Attempt to connect to the server
+				struct uip_conn *conn = uip_connect(&(queue->ipAddr), queue->port);
 
-#ifdef ENABLE_CLIENT_MODE
-	// Check if there is a pending client request
-	if (queue) {
-		// Attempt to connect to the server
-		struct uip_conn *conn = uip_connect(&(queue->ipAddr), queue->port);
+				if (conn != NULL) {
+	#ifdef DEBUG
+					Serial.print("GotConF");
+					Serial.println(queue->hostName);
+	#endif // DEBUG
 
-		if (conn != NULL) {
-#ifdef DEBUG
-			Serial.print("Got connection for ");
-			Serial.println(queue->hostName);
-#endif // DEBUG
+					// Attach the request object to its connection
+					conn->appstate.request = queue;
+					// Move the head of the queue to the next request in the queue
+					queue = queue->next;
+					// Clear the next pointer of the connected request
+					((GETrequest*)conn->appstate.request)->next = NULL;
+				}
+			}
+		} else {
+			state = DISCONNECTED;
+			Serial.println("ConLstAbrtUip");
+			uip_abort();
+			stack_process();
+		}
+	}	
+#endif // ENABLE_CLIENT_MODE
 
-			// Attach the request object to its connection
-			conn->appstate.request = queue;
-			// Move the head of the queue to the next request in the queue
-			queue = queue->next;
-			// Clear the next pointer of the connected request
-			((GETrequest*)conn->appstate.request)->next = NULL;
+
+	// Check if we need to initiate a connection
+	if (state == DISCONNECTED) {
+		Serial.println("IntWiS");
+
+		// WiShield init
+		zg_init();
+		
+#ifdef USE_DIG0_INTR
+		attachInterrupt(0, zg_isr, LOW);
+#endif
+		
+#ifdef USE_DIG8_INTR
+		// set digital pin 8 on Arduino
+		// as ZG interrupt pin
+		PCICR |= (1<<PCIE0);
+		PCMSK0 |= (1<<PCINT0);
+#endif
+		
+		state = CONNECTING;	
+		connectTime = millis();
+		Serial.print ("C...");
+	}
+	
+	// Check if we're waiting for the connection to be established
+	if (state == CONNECTING) {
+		
+		// Move things along
+		zg_drv_process();
+
+		// Check if we got a connection
+		if (isConnected()) {
+			state = CONNECTED;
+			Serial.println("C!");
+
+			// Start the stack
+			stack_init();
+			// Listen for server requests on port 80 if appropriate
+			if (callbackFunc) {
+				uip_listen(HTONS(80));
+			}	
+		} else if (millis() - connectTime > CONNECTION_TIMEOUT) {
+				// No success, try restarting the WiShield
+				state = DISCONNECTED;
+			Serial.print("ConFaild, restrt WiS");
 		}
 	}
-#endif // ENABLE_CLIENT_MODE
+
+	return (state == CONNECTED);
 }
 
 // Single instance of the server

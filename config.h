@@ -41,14 +41,14 @@
 extern U8 local_ip[];
 extern U8 gateway_ip[];
 extern U8 subnet_mask[];
-extern const prog_char ssid[];
+extern char ssid[32];
 extern U8 ssid_len;
-extern const prog_char security_passphrase[];
+extern char security_passphrase[64];
 extern U8 security_passphrase_len;
 extern U8 security_type;
 extern U8 wireless_mode;
 
-extern prog_uchar wep_keys[];
+extern U8 wep_keys[];
 
 extern const prog_char webpage[];
 extern const prog_char twitter[];

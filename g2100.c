@@ -78,8 +78,8 @@ void zg_init()
 	zg_interrupt_reg(0xff, 0);
 	zg_interrupt_reg(0x80|0x40, 1);
 
-	ssid_len = (U8)strlen_P(ssid);
-	security_passphrase_len = (U8)strlen_P(security_passphrase);
+	ssid_len = (U8)strlen(ssid);
+	security_passphrase_len = (U8)strlen(security_passphrase);
 }
 
 void spi_transfer(volatile U8* buf, U16 len, U8 toggle_cs)
@@ -225,6 +225,7 @@ void zg_process_isr()
 			break;
 		}
 		case ZG_INTR_ST_WT_INTR_REG:
+		{
 			hdr[0] = 0x40 | next_cmd;
 			hdr[1] = 0x00;
 			hdr[2] = 0x00;
@@ -232,7 +233,35 @@ void zg_process_isr()
 
 			intr_state = ZG_INTR_ST_RD_CTRL_REG;
 			break;
+		}
+		// this is the NEW CODE from this thread: http://asynclabs.com/forums/viewtopic.php?f=23&t=432&hilit=large+packet#p2980
 		case ZG_INTR_ST_RD_CTRL_REG:
+	      {
+		    // Get the size of the incoming packet
+		 U16 rx_byte_cnt = (0x0000 | (hdr[1] << 8) | hdr[2]) & 0x0fff;
+	
+		 // Check if our buffer is large enough for packet
+		    if(rx_byte_cnt < (U16)UIP_BUFSIZE) {
+		    zg_buf[0] = ZG_CMD_RD_FIFO;
+		    // Copy ZG2100 buffer contents into zg_buf (uip_buf)             
+		    spi_transfer(zg_buf, rx_byte_cnt + 1, 1);
+		    // interrupt from zg2100 was meaningful and requires further processing
+		    intr_valid = 1;
+		 }
+		 else {
+		    // Too Big, ignore it and continue
+		    intr_valid = 0; 
+		 }
+	
+		 // Tell ZG2100 we're done reading from its buffer
+		 hdr[0] = ZG_CMD_RD_FIFO_DONE;
+		 spi_transfer(hdr, 1, 1);
+		    
+		 // Done reading interrupt from ZG2100
+		 intr_state = 0;
+		 break;
+  	      }
+		/*case ZG_INTR_ST_RD_CTRL_REG:
 		{
 			U16 rx_byte_cnt = (0x0000 | (hdr[1] << 8) | hdr[2]) & 0x0fff;
 
@@ -246,7 +275,7 @@ void zg_process_isr()
 
 			intr_state = 0;
 			break;
-		}
+		}*/
 		}
 	} while (intr_state);
 #ifdef USE_DIG8_INTR
@@ -337,12 +366,12 @@ void zg_write_wep_key(U8* cmd_buf)
 	zg_wep_key_req_t* cmd = (zg_wep_key_req_t*)cmd_buf;
 
 	cmd->slot = 3;		// WEP key slot
-	cmd->keyLen = 13;	// Key length: 5 bytes (64-bit WEP); 13 bytes (128-bit WEP)
+	cmd->keyLen = security_passphrase_len/2;	// SAVRAJ EDIT! // Key length: 5 bytes (64-bit WEP); 13 bytes (128-bit WEP)
 	cmd->defID = 0;		// Default key ID: Key 0, 1, 2, 3
 	cmd->ssidLen = ssid_len;
 	memset(cmd->ssid, 0x00, 32);
-	memcpy_P(cmd->ssid, ssid, ssid_len);
-	memcpy_P(cmd->key, wep_keys, ZG_MAX_ENCRYPTION_KEYS * ZG_MAX_ENCRYPTION_KEY_SIZE);
+	memcpy(cmd->ssid, ssid, ssid_len);
+	memcpy(cmd->key, wep_keys, ZG_MAX_ENCRYPTION_KEYS * ZG_MAX_ENCRYPTION_KEY_SIZE);
 
 	return;
 }
@@ -356,9 +385,9 @@ static void zg_calc_psk_key(U8* cmd_buf)
 	cmd->ssidLen = ssid_len;
 	cmd->reserved = 0;
 	memset(cmd->ssid, 0x00, 32);
-	memcpy_P(cmd->ssid, ssid, ssid_len);
+	memcpy(cmd->ssid, ssid, ssid_len);
 	memset(cmd->passPhrase, 0x00, 64);
-	memcpy_P(cmd->passPhrase, security_passphrase, security_passphrase_len);
+	memcpy(cmd->passPhrase, security_passphrase, security_passphrase_len);
 
 	return;
 }
@@ -370,7 +399,7 @@ static void zg_write_psk_key(U8* cmd_buf)
 	cmd->slot = 0;	// WPA/WPA2 PSK slot
 	cmd->ssidLen = ssid_len;
 	memset(cmd->ssid, 0x00, 32);
-	memcpy_P(cmd->ssid, ssid, cmd->ssidLen);
+	memcpy(cmd->ssid, ssid, cmd->ssidLen);
 	memcpy(cmd->keyData, wpa_psk_key, ZG_MAX_PMK_LEN);
 
 	return;
@@ -565,7 +594,7 @@ void zg_drv_process()
 
 		cmd->ssidLen = ssid_len;
 		memset(cmd->ssid, 0, 32);
-		memcpy_P(cmd->ssid, ssid, ssid_len);
+		memcpy(cmd->ssid, ssid, ssid_len);
 
 		// units of 100 milliseconds
 		cmd->sleepDuration = 0;

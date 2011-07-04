@@ -145,7 +145,10 @@ class POSTrequest : public GETrequest
 		 * Creates a new POSTrequest with the provided IP, port, host name, URL and body function.
 		 */
 		POSTrequest(uint8* ipAddr, int port, char* hostName, char* URL, bodyFunction body);
-
+		/* added by savraj
+		* updates the IP address stored, for this getrequest
+		*/
+		void updateIPAddr(uint8* ipAddr);
 		void setBodyFunc(bodyFunction body);
 
 	};
@@ -179,6 +182,7 @@ class Server: public Print
 		 * @param pageServerFunc name of the sketch's page serving function
 		 */
 		void init(pageServingFunction function);
+		void getMACAddr(unsigned char *mac); // added this line by Savraj
 
 	    /*
 		 * Enables or disables verbose mode.  If verbose mode is true, then WiServer
@@ -189,8 +193,20 @@ class Server: public Print
 
 		/**
 		 * The server task method (must be called in the main loop to run the WiServer)
+		 *
+		 * @return true if there is a valid connection, otherwise false
 		 */
-		void server_task();
+		boolean server_task();
+	
+		/**
+		 * Checks for a connection, and if necessary waiting up to the specified number
+		 * of seconds for one to be established.
+		 *
+		 * @param seconds Maximum number of seconds to wait, or -1 to wait indefinitely
+		 *
+		 * @return true is there is a connection, otherwise false
+		 */
+		boolean checkConnection(int seconds);
 
 		/**
 		 * Writes a single byte to the current connection buffer

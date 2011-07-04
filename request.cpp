@@ -92,6 +92,11 @@ void POSTrequest::setBodyFunc(bodyFunction body) {
 	if (!this->active) this->body = body;
 }
 
+void POSTrequest::updateIPAddr(uint8* ipAddr) {
+	uip_ipaddr(this->ipAddr, ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
+}
+
+
 TWEETrequest::TWEETrequest(char* auth, bodyFunction message) : 
     // Create a POST request with the Twitter-specific data
 	POSTrequest (twitterIP, 80, twitterHost, twitterURL, message) {
